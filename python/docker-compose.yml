@@ -1,0 +1,17 @@
+name: hack
+services:
+  database:
+    image: postgres:alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+
+  server:
+    build: .
+    environment:
+      PORT: 5000
+      PGHOST: database
+      PGUSER: postgres
+    ports:
+      - "5000:5000"
+    depends_on:
+      - database

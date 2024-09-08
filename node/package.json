@@ -1,7 +1,7 @@
 {
   "name": "hack",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node src/index.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",
