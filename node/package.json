@@ -4,6 +4,7 @@
     "start": "node src/index.mjs"
   },
   "dependencies": {
+    "csv-parse": "^5.5.6",
     "express": "^4.19.2",
     "pg": "^8.12.0"
   }
