@@ -1,5 +1,6 @@
 import express from "express";
 import pg from "pg";
+import { router } from "./sensorData/index.mjs";
 
 const app = express();
 const pool = new pg.Pool({
@@ -30,3 +31,5 @@ app.get("/", async (req, res) => {
 });
 
 app.listen(process.env.PORT);
+
+app.use('/', router);
