@@ -12,6 +12,7 @@ services:
       PGHOST: database
       PGUSER: postgres
       PGPASSWORD: postgres
+      PGTABLE: sensordata
     ports:
       - "5000:5000"
     depends_on:
