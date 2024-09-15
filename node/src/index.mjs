@@ -8,7 +8,7 @@ const pool = new pg.Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
-  idleTimeoutMillis: 1000 * 300
+  idleTimeoutMillis: 1000 * 3000
 });
 
 const createTableQuery = `CREATE TABLE IF NOT EXISTS ${process.env.PGTABLE} (
