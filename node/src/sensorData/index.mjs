@@ -1,14 +1,14 @@
 import * as https from "https";
 import * as http from "http";
+import { stringify } from "csv-stringify";
+import { from as copyFrom } from "pg-copy-streams";
+import { pipeline } from "stream/promises";
 import { parse } from 'csv-parse';
 import { Router } from "express";
 const router = Router();
 
 // ingest waterfall
-router.post ("/ingest", [
-  fetchCSV,
-  saveIntoDB
-]);
+router.post ("/ingest", streamCSVIntoDB);
 
 /**
  * A helper function to throw consistent error object
@@ -24,53 +24,71 @@ function throwErrorResp(res, err, message, statusCode) {
 }
 
 /**
- * Express middleware to fetch CSV file data and collect in memory
+ * Express middleware to stream CSV file into DB
  */
-function fetchCSV(req, res, next) {
+async function streamCSVIntoDB(req, res, next) {
   if (!req.query.url) {
-    return throwErrorResp(res, "CSV url missing", "CSV url missing", 400);
+    return res.status(400).send("CSV url missing");
   }
+  // decide on http request type
   let httpGet = http.get;
   if (req.query.url.startsWith("https")) {
     httpGet = https.get;
   }
-  const data = [];
-  httpGet(req.query.url, function (response) {
-    response
-      .pipe(parse())
-      .on('data', (chunk) => {
-        // each chunk is a row, processing proper number and timestamp conversion
-        chunk[3] = parseInt(chunk[3]);
-        chunk[5] = new Date(chunk[5]);
-        data.push(chunk);
-      }).on('end', () => {
-        req.csvBuffer = data;
-        return next();
-      }).on('error', (err) => {
-        return throwErrorResp(res, err , "Download error", 500);
-      });
-  });
-}
-
-/**
- * Express middleware to save in-memory CSV data into database
- */
-async function saveIntoDB(req, res, next) {
+  // get client
   const client = await req.pgpool.connect();
-  req.csvBuffer = req.csvBuffer.splice(1);
-  for (const row of req.csvBuffer) {
-    let queryString = `INSERT into ${process.env.PGTABLE}` +
-      ` (id,type,subtype,reading,location,timestamp)` +
-      ` VALUES ($1,$2,$3,$4,$5,$6)`;
-    
-    await client.query(queryString, row);
+  let parser, transform, pgStream;
+  try {
+    // create copy query
+    let query = "COPY test1 FROM STDIN ";
+    query += "( ";
+    query += "FORMAT CSV, ";
+    query += "DELIMITER ',' ";
+    query += ") ";
+
+    // get csv stream parser, it can handle rows
+    parser = parse({});
+    // create array to csv row transfrom stream, it will ignore header row
+    let transform = stringify({
+      columns: [ "id", "type", "subtype", "reading", "location", "timestamp" ],
+      quote: false,
+      quotedEmpty: false,
+      delimiter: ',',
+      rowDelimiter: 'unix',
+      transform: (data, encoding, callback) => {
+        if (data && data[0] === "id") {
+          callback(null, Buffer.alloc(0));
+        } else {
+          callback(null, data.join(',') + '\n');
+        }
+      }
+    });
+
+    // create write stream
+    const pgStream = client.query(copyFrom(query));
+    // fetch csv
+    httpGet(req.query.url, async function (response) {
+      // response is a stream of the csv file
+      // pipeline is forming the stream chain from response -> parser -> transform -> pgStream
+      await pipeline(response, parser, transform, pgStream);
+      return res.send({ success: true, message: "Data ingested" });
+    });
+
+  } catch (err) {
+    console.error("Internal server error: ", err);
+    if (parser) {
+      parser.destroy();
+    }
+    if (transform) {
+      transform.destroy();
+    }
+    if (pgStream) {
+      pgStream.destroy();
+    }
+    return throwErrorResp(res, err, err && err.toString() || "Internal server error", 500);
+  } finally {
+    client.release();
   }
-  await client.end();
-  client.release();
-  return res.send({
-    success: true,
-    message: "Data ingested"
-  });
 }
 
-export { throwErrorResp, fetchCSV, saveIntoDB, router };
+export { throwErrorResp, router };
