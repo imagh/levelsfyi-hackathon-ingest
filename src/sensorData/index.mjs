@@ -178,7 +178,7 @@ async function getMedian(req, res, next) {
     // }
 
     res.send({
-      count: list.length,
+      count: (findMedian.maxHeap.size() + findMedian.minHeap.size()) || 0,
       median
     });
   } catch(err) {
