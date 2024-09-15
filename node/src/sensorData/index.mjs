@@ -5,7 +5,26 @@ import { from as copyFrom, to as copyTo } from "pg-copy-streams";
 import { pipeline } from "stream/promises";
 import { parse } from 'csv-parse';
 import { Router } from "express";
+import { Transform } from "stream";
 const router = Router();
+
+class DiscardHeaderStream extends Transform {
+  #headerDiscarded = false;
+
+  _transform(chunk, encoding, callback) {
+    if (!this.#headerDiscarded) {
+      let newLineIndex = chunk.toString().indexOf('\n');
+      if (newLineIndex !== -1) {
+        callback(null, chunk.slice(newLineIndex + 1));
+        this.#headerDiscarded = true;
+      } else {
+        callback(null, Buffer.alloc(0));
+      }
+    } else {
+      callback(null, chunk);
+    }
+  }
+}
 
 // ingest waterfall
 router.post ("/ingest", streamCSVIntoDB);
@@ -37,48 +56,30 @@ async function streamCSVIntoDB(req, res, next) {
   }
   // get client
   const client = await req.pgpool.connect();
-  let parser, transform, pgStream;
+  let transform, pgStream;
   try {
     // create copy query
-    let query = "COPY test1 FROM STDIN ";
+    let query = `COPY ${process.env.PGTABLE} FROM STDIN `;
     query += "( ";
     query += "FORMAT CSV, ";
     query += "DELIMITER ',' ";
     query += ") ";
 
-    // get csv stream parser, it can handle rows
-    parser = parse({});
-    // create array to csv row transfrom stream, it will ignore header row
-    let transform = stringify({
-      columns: [ "id", "type", "subtype", "reading", "location", "timestamp" ],
-      quote: false,
-      quotedEmpty: false,
-      delimiter: ',',
-      rowDelimiter: 'unix',
-      transform: (data, encoding, callback) => {
-        if (data && data[0] === "id") {
-          callback(null, Buffer.alloc(0));
-        } else {
-          callback(null, data.join(',') + '\n');
-        }
-      }
-    });
+    // transform stream
+    transform = new DiscardHeaderStream();
 
     // create write stream
-    const pgStream = client.query(copyFrom(query));
+    pgStream = client.query(copyFrom(query));
     // fetch csv
     httpGet(req.query.url, async function (response) {
       // response is a stream of the csv file
       // pipeline is forming the stream chain from response -> parser -> transform -> pgStream
-      await pipeline(response, parser, transform, pgStream);
+      await pipeline(response, transform, pgStream);
       res.send({ success: true, message: "Data ingested" });
     });
 
   } catch (err) {
     console.error("Internal server error: ", err);
-    if (parser) {
-      parser.destroy();
-    }
     if (transform) {
       transform.destroy();
     }
@@ -102,7 +103,7 @@ async function getMedian(req, res, next) {
   try {
     // construct copy query
     copyQuery = "COPY ";
-    let selectQuery = "( SELECT reading FROM test1";
+    let selectQuery = `( SELECT reading FROM ${process.env.PGTABLE}`;
 
     if (req.query.filter) {
       // apply filters
@@ -133,7 +134,9 @@ async function getMedian(req, res, next) {
     await pipeline(pgStream, parser);
 
     // find median
-    if (list.length % 2 === 0) {
+    if (!list.length) {
+      median = 0;
+    } else if (list.length % 2 === 0) {
       median = (Number(list[(list.length / 2) - 1]) + Number(list[list.length / 2])) / 2;  // 0, 1, 2, 3, 4, 5
     } else {
       median = Number(list[parseInt(list.length / 2)]);

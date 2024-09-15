@@ -3,6 +3,7 @@ import pg from "pg";
 import { router } from "./sensorData/index.mjs";
 
 const app = express();
+// console.log(process.env);
 const pool = new pg.Pool({
   host: process.env.PGHOST,
   user: process.env.PGUSER,
@@ -10,6 +11,7 @@ const pool = new pg.Pool({
   database: process.env.PGDATABASE,
   idleTimeoutMillis: 1000 * 3000
 });
+
 
 const createTableQuery = `CREATE TABLE IF NOT EXISTS ${process.env.PGTABLE} (
   id uuid NOT NULL,
