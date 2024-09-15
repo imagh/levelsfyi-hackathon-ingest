@@ -1,10 +1,11 @@
 import * as https from "https";
 import * as http from "http";
-import { stringify } from "csv-stringify";
+import MinHeap from "heap";
+import MaxHeap from "heap";
 import { from as copyFrom, to as copyTo } from "pg-copy-streams";
 import { pipeline } from "stream/promises";
 import { parse } from 'csv-parse';
-import { Router } from "express";
+import e, { Router } from "express";
 import { Transform } from "stream";
 const router = Router();
 
@@ -22,6 +23,35 @@ class DiscardHeaderStream extends Transform {
       }
     } else {
       callback(null, chunk);
+    }
+  }
+}
+
+class FindMedian {
+  constructor() {
+    this.minHeap = new MinHeap((a, b) => a - b);
+    this.maxHeap = new MaxHeap((a, b) => b - a);
+  }
+
+  addNumberToHeap(number) {
+    if (this.maxHeap.size() === 0 || number <= this.maxHeap.peek()) {
+      this.maxHeap.push(number);
+    } else {
+      this.minHeap.push(number);
+    }
+
+    if (this.maxHeap.size() > this.minHeap.size() + 1) {
+      this.minHeap.push(this.maxHeap.pop());
+    } else if (this.minHeap.size() > this.maxHeap.size()) {
+      this.maxHeap.push(this.minHeap.pop());
+    }
+  }
+
+  getMedian() {
+    if (this.maxHeap.size() > this.minHeap.size()) {
+      return this.maxHeap.peek();
+    } else {
+      return (this.maxHeap.peek() + this.minHeap.peek()) / 2;
     }
   }
 }
@@ -98,7 +128,7 @@ async function getMedian(req, res, next) {
   // get client
   const client = await req.pgpool.connect();
   let copyQuery, median, pgStream, parser;
-  const list = [];
+  // const list = [];
 
   try {
     // construct copy query
@@ -122,25 +152,30 @@ async function getMedian(req, res, next) {
         }
       }
     }
-    selectQuery += " ORDER BY reading ASC )";
+    selectQuery += " )"; // ORDER BY reading ASC )";
     copyQuery += selectQuery + " TO STDOUT ";
 
     pgStream = client.query(copyTo(copyQuery));
+
+    const findMedian = new FindMedian();
     parser = parse()
       .on("data", (data) => {
-        list.push(data[0]);
+        findMedian.addNumberToHeap(data[0]);
+        // list.push(data[0]);
       });
 
     await pipeline(pgStream, parser);
 
+    median = findMedian.getMedian() || 0;
+
     // find median
-    if (!list.length) {
-      median = 0;
-    } else if (list.length % 2 === 0) {
-      median = (Number(list[(list.length / 2) - 1]) + Number(list[list.length / 2])) / 2;  // 0, 1, 2, 3, 4, 5
-    } else {
-      median = Number(list[parseInt(list.length / 2)]);
-    }
+    // if (!list.length) {
+    //   median = 0;
+    // } else if (list.length % 2 === 0) {
+    //   median = (Number(list[(list.length / 2) - 1]) + Number(list[list.length / 2])) / 2;  // 0, 1, 2, 3, 4, 5
+    // } else {
+    //   median = Number(list[parseInt(list.length / 2)]);
+    // }
 
     res.send({
       count: list.length,
